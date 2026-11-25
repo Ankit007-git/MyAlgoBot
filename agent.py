@@ -1,5 +1,5 @@
 import os, requests, yfinance as yf, pandas as pd, numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CAPITAL = 100000
@@ -49,6 +49,9 @@ def score(last, vwap, rsi, adx, rvol, vix, pdh, acc):
 
 def main():
     try:
+        # IST TIME - GitHub UTC hota hai, isliye +5:30 kiya
+        now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        today = now
         d1=clean(yf.download("^NSEI", period="2y", interval="1d", progress=False, auto_adjust=True))
         di=clean(yf.download("^NSEI", period="60d", interval="15m", progress=False, auto_adjust=True))
         vx=clean(yf.download("^INDIAVIX", period="5d", interval="1d", progress=False, auto_adjust=True))
@@ -57,21 +60,40 @@ def main():
         t1,w1,a1=backtest_fast(d1); t2,w2,a2=backtest_fast(di)
         vix=round(float(vx.iloc[-1]['Close']),2); price=round(float(ld['Close']),2)
         atr_d=round(float(ld['ATR']),2); atr_i=round(float(li['ATR']),2)
-        today=datetime.now(); is_exp=today.weekday()==1; atm=round(price/50)*50
+        is_exp=today.weekday()==1; atm=round(price/50)*50
         s_i,r_i=score(li, round(float(li['VWAP']),2), round(float(li['RSI']),1), round(float(li['ADX']),1), round(float(li['RVOL']),2), vix, round(float(pdh['High']),2), a2)
         s_s,r_s=score(ld, round(float(ld['VWAP']),2), round(float(ld['RSI']),1), round(float(ld['ADX']),1), round(float(ld['RVOL']),2), vix, round(float(pdh['High']),2), a1)
-        is_fixed=(today.hour==3 and 10<=today.minute<=25)
+
+        # ===== TERA RULE - 4 RULE LOCK =====
+        mins = today.hour*60 + today.minute
+
+        # RULE 1: 8:45 - SIRF REPORT, TRADE NAHI
+        if 525 <= mins <= 540: # 8:45 - 9:00
+            msg=f"""📋 <b>8:45 MORNING REPORT - TRADE NAHI</b>\n📅 {today.strftime('%d %b %A %I:%M %p')}\n📊 <b>NIFTY {price} | VIX {vix}</b> {'⚠️ EXPIRY' if is_exp else ''}\n👀 Aaj ka Plan: 9:30 ka Wait karo\n<b>Score Abhi:</b> Intra {s_i}/10 | Swing {s_s}/10\n<b>LOGIC Intra:</b>\n{chr(10).join(r_i)}\n<b>🧪 BACKTEST:</b> Daily {a1}% | Intra {a2}%\n"""
+            send(msg); return
+
+        # RULE 2: 9:15 - SIRF DEKHNA, TRADE NAHI
+        if mins < 570: # 9:30 se pehle
+            print(f"Observe Only - 9:15 Rule - Score {s_i}"); return
+
+        # RULE 3: 9:30 ke baad hi TRADE - Score 7+ chahiye
         is_solid=(s_i>=7 or s_i<=3 or s_s>=7 or s_s<=3)
-        if not is_fixed and not is_solid:
-            print(f"Silent Intra {s_i} Swing {s_s}"); return
+        if not is_solid:
+            print(f"Silent - Score kam hai Intra {s_i} Swing {s_s}"); return
+
         fut=f"🟢 FUTURE BUY {price} SL {round(price-atr_i,2)} T1 {round(price+atr_i,2)} T2 {round(price+atr_i*2,2)}" if s_i>=7 else f"🔴 FUTURE SELL {price} SL {round(price+atr_i,2)} T1 {round(price-atr_i,2)}" if s_i<=3 else f"🟡 FUTURE NO TRADE {s_i}/10"
         sw=f"🟢 SWING BUY {price} SL {round(price-atr_d,2)} T1 {round(price+atr_d,2)} T2 {round(price+atr_d*2,2)}" if s_s>=7 else f"🔴 SWING SELL {price} SL {round(price+atr_d,2)}" if s_s<=3 else f"🟡 SWING NO TRADE {s_s}/10"
+
+        # RULE 4: 11:30 ke baad OPTION MAT LO - Theta khayega
         if vix>=20: opt=f"⛔ OPTION MAT LO - VIX {vix} HIGH"
-        elif is_exp: opt="⚠️ EXPIRY HAI - 1 Lot Only"
+        elif mins >= 690: # 11:30 ke baad
+            opt=f"⛔ OPTION MAT LO - 11:30 Ho Gaya, Theta Tez Katega | Score {s_i}/10"
+        elif is_exp: opt="⚠️ EXPIRY HAI - 1 Lot Only, 1 Baje Se Pehle Exit"
         elif s_i>=7: opt=f"🟢 OPTION BUY {atm} CE ATM - Score {s_i}/10"
         elif s_i<=3: opt=f"🔴 OPTION BUY {atm} PE ATM - Score {s_i}/10"
         else: opt=f"🟡 OPTION NO TRADE {s_i}/10"
-        msg=f"""✅ <b>MyAlgoBot - LIGHT + ACCURATE</b>\n📅 {today.strftime('%d %b %A %I:%M %p')}\n📊 <b>NIFTY {price} | VIX {vix}</b> {'⚠️ EXPIRY' if is_exp else ''}\n<b>1️⃣ FUTURE</b>\n{fut}\n<b>2️⃣ SWING</b>\n{sw}\n<b>3️⃣ OPTION</b>\n{opt}\n<b>LOGIC Intra:</b>\n{chr(10).join(r_i)}\n<b>LOGIC Swing:</b>\n{chr(10).join(r_s)}\n<b>💰 RISK:</b> 1 Trade ₹1000 | Daily ₹3000\n<b>🧪 BACKTEST 2 SAAL:</b> Daily {a1}% ({w1}/{t1}) | Intra {a2}% ({w2}/{t2})\n"""
+
+        msg=f"""✅ <b>MyAlgoBot - RULE LOCK</b>\n📅 {today.strftime('%d %b %A %I:%M %p')}\n📊 <b>NIFTY {price} | VIX {vix}</b> {'⚠️ EXPIRY' if is_exp else ''}\n<b>1️⃣ FUTURE (9:30 ke baad)</b>\n{fut}\n<b>2️⃣ SWING</b>\n{sw}\n<b>3️⃣ OPTION (11:30 tak hi)</b>\n{opt}\n<b>LOGIC Intra:</b>\n{chr(10).join(r_i)}\n<b>LOGIC Swing:</b>\n{chr(10).join(r_s)}\n<b>💰 RISK:</b> 1 Trade ₹1000 | Daily ₹3000\n<b>🧪 BACKTEST 2 SAAL:</b> Daily {a1}% ({w1}/{t1}) | Intra {a2}% ({w2}/{t2})\n"""
         send(msg)
     except Exception as e: send(f"❌ Error: {str(e)}")
 if __name__=="__main__": main()
