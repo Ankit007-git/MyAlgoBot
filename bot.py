@@ -1,7 +1,7 @@
 import os, requests, datetime, time
 import pandas as pd
-TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 
 def send_telegram(msg):
