@@ -1,4 +1,4 @@
-import os, json, requests, datetime
+import os, json, requests, datetime, time
 from tradingview_ta import TA_Handler, Interval
 
 # ============ CONFIG ============
@@ -8,163 +8,176 @@ UPSTOX_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 CAPITAL = 30000
 MEMORY_FILE = "memory.json"
 
-def send(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try: requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
-    except: pass
+# True = Paper Trade (Nakli, Safe) | False = Real Trade (Asli Paisa)
+PAPER_TRADE = True
 
-# ============ MEMORY - AGENT KI YAADDAST ============
+# ============ TELEGRAM ============
+def send(msg):
+    if not TELEGRAM_TOKEN or not CHAT_ID: 
+        print("Telegram Token/Chat ID Missing")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+    except Exception as e: print(e)
+
 def load_memory():
     try:
         with open(MEMORY_FILE) as f: return json.load(f)
-    except: return {"trades": [], "daily_pnl": {}, "strategy_stats": {"momentum": {"win":0,"loss":0}, "breakout": {"win":0,"loss":0}, "mean_reversion": {"win":0,"loss":0}}}
+    except: return {"trades": [], "daily_pnl": {}, "paper_pnl": 0}
 
 def save_memory(mem):
     with open(MEMORY_FILE, "w") as f: json.dump(mem, f, indent=2)
 
-# ============ LAYER 1 - BRAIN ============
-def get_vix():
-    try:
-        s = requests.Session()
-        s.get("https://www.nseindia.com", headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        r = s.get("https://www.nseindia.com/api/allIndices", headers={"User-Agent": "Mozilla/5.0"}, timeout=10).json()
-        for i in r["data"]:
-            if i["index"]=="INDIA VIX": return float(i["last"])
-    except: pass
-    return 14.0
-
-def get_fii_dii():
-    try:
-        # NSE FII/DII - Agar fail ho to Neutral
-        return {"mood": "Buying", "score": 1, "msg": "FII/DII Buying"}
-    except: return {"mood": "Neutral", "score": 0, "msg": "Data Fail"}
-
-def get_moneycontrol_news(name):
-    try:
-        # Moneycontrol News Sentiment - Simple Check
-        return 0, "No Bad News"
-    except: return 0, "Fail"
-
-def brain_decide(vix, fii):
-    # BRAIN LOGIC - Institutional jaisa
-    if vix > 22: return "BEARISH", "VIX bahut High hai, Market me Dar hai. Aaj Risk mat lo."
-    if vix > 18: return "CAUTIOUS", "VIX thoda High hai, sirf 1 Trade lo, chhota Risk lo."
-    if fii["mood"]=="Buying" and vix < 15: return "BULLISH", "VIX Low + FII Buying = Best Time. Full Confidence se Trade lo."
-    return "NEUTRAL", "Market Normal hai. Normal Risk lo."
-
-# ============ LAYER 3 - RISK ENGINE ============
-def risk_check(mem, capital):
-    today = str(datetime.date.today())
-    # Daily Loss Check - 2% Rule
-    daily_pnl = mem["daily_pnl"].get(today, 0)
-    if daily_pnl <= -capital*0.02:
-        return False, f"⛔ DAILY STOP - Aaj {abs(daily_pnl)} Loss ho gaya (2% Limit). Agent khud Band ho gaya."
-    # Open Trades Check - Max 3
-    open_trades = [t for t in mem["trades"] if t.get("status")=="open"]
-    if len(open_trades) >= 3:
-        return False, "⛔ MAX 3 Trade pehle se Open hai."
-    return True, "Risk OK"
-
-# ============ LAYER 2 - ALPHA ENGINE - 5 STRATEGY ============
+# ============ BRAIN - TRADINGVIEW ============
 STOCKS = {
-    "BEL": ("NSE:BEL", "NSE_EQ|INE263A01024", "Defence"),
-    "HAL": ("NSE:HAL", "NSE_EQ|INE066F01012", "Defence"),
-    "RELIANCE": ("NSE:RELIANCE", "NSE_EQ|INE002A01018", "Energy"),
-    "TCS": ("NSE:TCS", "NSE_EQ|INE467B01029", "IT"),
-    "INFY": ("NSE:INFY", "NSE_EQ|INE009A01021", "IT"),
-    "HDFCBANK": ("NSE:HDFCBANK", "NSE_EQ|INE040A01034", "Bank"),
+    "BEL": {"tv": "BEL", "upstox": "NSE_EQ|INE263A01024"},
+    "HAL": {"tv": "HAL", "upstox": "NSE_EQ|INE066F01012"},
+    "RELIANCE": {"tv": "RELIANCE", "upstox": "NSE_EQ|INE002A01018"},
+    "TCS": {"tv": "TCS", "upstox": "NSE_EQ|INE467B01029"},
+    "INFY": {"tv": "INFY", "upstox": "NSE_EQ|INE009A01021"},
+    "HDFCBANK": {"tv": "HDFCBANK", "upstox": "NSE_EQ|INE040A01034"},
+    "TATAMOTORS": {"tv": "TATAMOTORS", "upstox": "NSE_EQ|INE155A01022"},
+    "SBIN": {"tv": "SBIN", "upstox": "NSE_EQ|INE062A01020"},
+    "TITAN": {"tv": "TITAN", "upstox": "NSE_EQ|INE280A01028"},
+    "ADANIENT": {"tv": "ADANIENT", "upstox": "NSE_EQ|INE423A01024"},
 }
 
-def get_tv(tv_sym):
+def get_tv_data(symbol):
     try:
-        h = TA_Handler(symbol=tv_sym.split(":")[1], screener="india", exchange="NSE", interval=Interval.INTERVAL_1_DAY)
+        h = TA_Handler(symbol=symbol, screener="india", exchange="NSE", interval=Interval.INTERVAL_15_MINUTES)
         a = h.get_analysis()
-        return {"rsi": a.indicators["RSI"], "macd": a.indicators["MACD.macd"], "signal": a.indicators["MACD.signal"], "ema20": a.indicators["EMA20"], "close": a.indicators["close"], "rec": a.summary["RECOMMENDATION"]}
-    except: return None
+        return {"close": a.indicators["close"], "rsi": a.indicators["RSI"], "rec": a.summary["RECOMMENDATION"], "buy": a.summary["BUY"], "sell": a.summary["SELL"]}
+    except Exception as e:
+        print(f"TV Fail {symbol}: {e}")
+        return None
 
-def get_upstox_live(key):
+def get_vix():
     try:
-        r = requests.get(f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={key}", headers={"Authorization": f"Bearer {UPSTOX_TOKEN}"}, timeout=10).json()
-        return float(list(r["data"].values())[0]["last_price"])
+        h = TA_Handler(symbol="INDIAVIX", screener="india", exchange="NSE", interval=Interval.INTERVAL_15_MINUTES)
+        return h.get_analysis().indicators["close"]
+    except: return 14.0
+
+# ============ EXECUTION ============
+def place_order_upstox(symbol_key, qty, entry, sl, target):
+    if PAPER_TRADE:
+        return {"status": "PAPER", "order_id": f"PAPER_{datetime.datetime.now().strftime('%H%M%S')}"}
+    try:
+        url = "https://api.upstox.com/v2/order/place"
+        headers = {"Authorization": f"Bearer {UPSTOX_TOKEN}", "Content-Type": "application/json"}
+        payload = {"quantity": qty, "product": "I", "validity": "DAY", "price": entry, "tag": "AGENT_V2", "instrument_token": symbol_key, "order_type": "LIMIT", "transaction_type": "BUY", "disclosed_quantity": 0, "trigger_price": 0, "is_amo": False}
+        r = requests.post(url, json=payload, headers=headers, timeout=10).json()
+        return {"status": "REAL", "order_id": r.get("data", {}).get("order_id", str(r))}
+    except Exception as e:
+        return {"status": "FAILED", "order_id": str(e)}
+
+def send_approval_request(trade):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    keyboard = {"inline_keyboard": [[
+        {"text": "✅ APPROVE - Order Lagao", "callback_data": f"APPROVE_{trade['name']}"},
+        {"text": "❌ REJECT - Mat Lagao", "callback_data": f"REJECT_{trade['name']}"}
+    ]]}
+    mode = "📝 PAPER TRADE (Nakli)" if PAPER_TRADE else "💰 REAL TRADE (Asli Paisa)"
+    text = f"🧠 *AGENT KO TRADE MILA - APPROVAL CHAHIYE*\n\n📈 *{trade['name']} - BUY*\nEntry: {trade['entry']} | SL: {trade['sl']} | Target: {trade['target']}\nQty: {trade['qty']} | Risk: ~300 Rs\nMode: {mode}\n\n*Order lagau? Button dabao - 5 Min hai*"
+    try:
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "reply_markup": keyboard}, timeout=10).json()
+        return r["result"]["message_id"] if r.get("ok") else None
     except: return None
 
+def wait_for_approval(trade, timeout=300):
+    send(f"⏳ *Waiting for Approval - {trade['name']}*\n5 Min hai, Telegram pe Button dabao...")
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    offset = 0
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            r = requests.get(url, params={"offset": offset, "timeout": 10}, timeout=15).json()
+            for upd in r.get("result", []):
+                offset = upd["update_id"] + 1
+                if "callback_query" in upd:
+                    cb = upd["callback_query"]
+                    data = cb["data"]
+                    try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb["id"], "text": "Mil gaya! ✅"}, timeout=5)
+                    except: pass
+                    if data.startswith("APPROVE"): return True
+                    if data.startswith("REJECT"): return False
+        except: pass
+        time.sleep(3)
+    return False
+
+def execute_with_approval(trades_list, mem):
+    final = ""
+    for t in trades_list:
+        send_approval_request(t)
+        approved = wait_for_approval(t, timeout=300)
+        if approved:
+            # TWAP - 2 hisso me Order
+            qty1 = max(1, t["qty"] // 2) if t["qty"] > 1 else 1
+            qty2 = t["qty"] - qty1
+            res1 = place_order_upstox(t["upstox_key"], qty1, t["entry"], t["sl"], t["target"])
+            res2 = place_order_upstox(t["upstox_key"], qty2, t["entry"], t["sl"], t["target"])
+            send(f"✅ *APPROVED BY YOU*\n{t['name']} Order Lag Gaya!\nOrder ID: {res1['order_id']}\nQty: {t['qty']} ({qty1}+{qty2}) @ {t['entry']}\nSL: {t['sl']} | Target: {t['target']}")
+            mem["trades"].append({"date": str(datetime.date.today()), "name": t["name"], "entry": t["entry"], "sl": t["sl"], "target": t["target"], "qty": t["qty"], "status": "open", "mode": "PAPER" if PAPER_TRADE else "REAL", "order_id": res1["order_id"]})
+            final += f"\n✅ APPROVED - {t['name']} Done"
+        else:
+            send(f"❌ *REJECTED / TIMEOUT*\n{t['name']} Order Nahi Lagaya.")
+            final += f"\n❌ REJECTED - {t['name']}"
+    save_memory(mem)
+    return final
+
+# ============ MAIN ============
 def main():
+    today = datetime.date.today()
     mem = load_memory()
-    # NSE Check - Sat/Sun
-    if datetime.date.today().weekday() >= 5:
-        send("⛔ *AGENT REPORT* - Aaj Saturday/Sunday hai, Market Band hai. Agent Rest pe hai.")
+    # Saturday / Sunday - Market Band
+    if today.weekday() >= 5:
+        send(f"⛔ *AGENT REPORT*\nAaj {today.strftime('%A')} hai, Market Band hai.\nMonday 9:15 ko fir milte hai.")
         return
 
-    # BRAIN START
     vix = get_vix()
-    fii = get_fii_dii()
-    mood, reason = brain_decide(vix, fii)
+    if vix > 22: mood = "🔴 FEAR - Sirf 1 Trade"
+    elif vix > 18: mood = "🟡 CAUTIOUS - Halka Trade"
+    else: mood = "🟢 BULLISH - Normal Trade"
+    max_trades = 1 if vix > 22 else 2
 
-    # RISK CHECK
-    ok, risk_msg = risk_check(mem, CAPITAL)
-    if not ok:
-        send(f"🛡️ *RISK ENGINE NE ROK DIYA*\n{risk_msg}")
+    # Daily Loss Check
+    today_str = str(today)
+    if mem["daily_pnl"].get(today_str, 0) <= -600:
+        send("🛑 *RISK STOP*\nAaj ka Loss 600 Rs ho gaya, Ab koi Trade nahi.")
         return
 
-    send(f"🧠 *ALGO AGENT v2 - ON*\nMood: *{mood}* | VIX: {vix}\nReason: {reason}\nRisk: {risk_msg}\nCapital: {CAPITAL} | Memory: {len(mem['trades'])} Trades Yaad Hai")
-
-    # ALPHA SCAN
-    trades = []
-    sector_used = {}
-    for name, (tv_sym, up_key, sector) in STOCKS.items():
-        tv = get_tv(tv_sym)
-        live = get_upstox_live(up_key)
-        if not tv or not live: continue
-        mc_score, mc_msg = get_moneycontrol_news(name)
-        if mc_score == -3: continue # Buri News - Chhod do
-
-        # 5 Strategy Score
-        score = 0; strategies = []
-        # 1. Momentum
-        if tv["rsi"] > 55 and tv["rsi"] < 70: score+=2; strategies.append("Momentum")
-        # 2. Breakout
-        if live > tv["ema20"]: score+=2; strategies.append("Breakout")
-        # 3. MACD
-        if tv["macd"] > tv["signal"]: score+=2; strategies.append("MACD")
-        # 4. TradingView Rec
-        if "BUY" in tv["rec"]: score+=2; strategies.append("TV-BUY")
-        # 5. FII + VIX
-        score += fii["score"]; strategies.append("FII")
-        score += mc_score
-
-        if score >= 7:
-            # RISK ENGINE - Position Sizing - 1% Risk Rule
-            # SL = 1% neeche, Risk per Trade = 300 Rs (1% of 30k)
-            entry = live
-            sl = round(entry*0.99, 2)
-            target = round(entry*1.03, 2)
+    candidates = []
+    for name, info in STOCKS.items():
+        d = get_tv_data(info["tv"])
+        if not d: continue
+        # Brain Logic: RSI 55-70 + Strong Buy + Price > 100
+        if d["rsi"] >= 55 and d["rsi"] <= 70 and d["rec"] in ["STRONG_BUY", "BUY"] and d["buy"] >= 8:
+            entry = round(d["close"], 2)
+            sl = round(entry * 0.992, 2)  # 0.8% SL
+            target = round(entry * 1.025, 2) # 2.5% Target
             risk_per_share = entry - sl
             if risk_per_share <= 0: continue
-            qty = int(300 // risk_per_share) # 300 Rs Risk = 1%
-            # Max Capital per Trade = 10k
-            qty = min(qty, int(10000 // entry))
-            if qty <= 0: qty = 1
-            # Sector Limit - Ek Sector me 30% se zyada nahi
-            if sector_used.get(sector,0) >= 1: continue
-            sector_used[sector] = sector_used.get(sector,0)+1
-            trades.append({"name": name, "score": score, "entry": entry, "qty": qty, "sl": sl, "target": target, "sector": sector, "strategies": ",".join(strategies), "rsi": round(tv["rsi"],1)})
+            qty = int(300 / risk_per_share)
+            if qty < 1: continue
+            if qty * entry > 15000: qty = int(15000 / entry)
+            if qty < 1: continue
+            candidates.append({"name": name, "upstox_key": info["upstox"], "entry": entry, "sl": sl, "target": target, "qty": qty, "rsi": round(d["rsi"], 1), "score": d["buy"]})
 
-    trades = sorted(trades, key=lambda x: x["score"], reverse=True)[:2]
-    if not trades:
-        send("❌ *AGENT: NO TRADE AAJ*\nKoi Stock 7/10 Score pass nahi kar paya. Agent ne khud Trade rok diya.")
+    candidates = sorted(candidates, key=lambda x: x["score"], reverse=True)[:max_trades]
+
+    if not candidates:
+        send(f"🧠 *ALGO AGENT v2 - ON*\nMood: {mood}\nVIX: {vix:.1f}\n\nAaj koi Strong Setup nahi mila.\nCapital Safe hai. No Trade = Good Trade.")
         return
 
-    # MEMORY ME SAVE KARO
-    msg = f"🔥 *AGENT v2 - BEST {len(trades)} TRADE | Mood: {mood}*\nVIX: {vix} | FII: {fii['msg']}\n\n"
-    for i, t in enumerate(trades, 1):
-        loss = round((t["entry"]-t["sl"])*t["qty"],0)
-        profit = round((t["target"]-t["entry"])*t["qty"],0)
-        msg += f"*{i}. {t['name']}* - Score {t['score']}/10 | {t['sector']}\nStrategy: {t['strategies']}\nEntry: {t['entry']} (Live Upstox) | Qty: {t['qty']}\nSL: {t['sl']} | Target: {t['target']}\nRisk: ~{loss} (1%) | Profit: ~{profit} (3%)\nReason: {reason}\n\n"
-        # Memory Save
-        mem["trades"].append({"date": str(datetime.date.today()), "name": t["name"], "entry": t["entry"], "sl": t["sl"], "target": t["target"], "qty": t["qty"], "status": "open", "strategy": t["strategies"]})
-    msg += "🛡️ Risk Engine: 1% Risk per Trade, 2% Daily Stop ON hai."
-    save_memory(mem)
-    send(msg)
+    # Pehle Summary bhejo
+    summary = f"🧠 *ALGO AGENT v2 - ON*\nMood: {mood}\nVIX: {vix:.1f}\n\n🔥 *{len(candidates)} Trade Mile hai - Approval Chahiye*\n"
+    for c in candidates:
+        summary += f"\n• {c['name']} - Entry {c['entry']} | RSI {c['rsi']} | Qty {c['qty']}"
+    send(summary)
+
+    # Ab Approve / Reject wala Flow
+    result = execute_with_approval(candidates, mem)
+    send(f"🏁 *DAY DONE*\n{result}\n\nMode: {'📝 PAPER' if PAPER_TRADE else '💰 REAL'}\nKal fir milte hai 9:15 AM.")
 
 if __name__ == "__main__":
     main()
