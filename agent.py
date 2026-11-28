@@ -2,9 +2,9 @@ import os, json, requests, datetime, time
 from tradingview_ta import TA_Handler, Interval
 
 # ============ CONFIG ============
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-UPSTOX_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or os.getenv("TELEGRAM_CHATID")
+UPSTOX_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN") or os.getenv("UPSTOX_TOKEN")
 CAPITAL = 30000
 MEMORY_FILE = "memory.json"
 
