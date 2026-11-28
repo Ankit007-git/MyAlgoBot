@@ -3,16 +3,16 @@ import os, time, requests, datetime, pytz
 # ✅ Screenshot wale Secrets se 100% Match
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-UPSTOX_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 CAPITAL = int(os.getenv("CAPITAL", "30000"))
 
 UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
 UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET")
 UPSTOX_PIN = os.getenv("UPSTOX_PIN")
-UPSTOX_REDIRECT_URI = os.getenv("UPSTOX_REDIRECT_URI")
+UPSTOX_REDIRECT_URI = os.getenv("UPSTOX_REDIRECT_URI", "https://127.0.0.1:8000")
 UPSTOX_REFRESH_TOKEN = os.getenv("UPSTOX_REFRESH_TOKEN")
 UPSTOX_TOTP_SECRET = os.getenv("UPSTOX_TOTP_SECRET")
 UPSTOX_USER_ID = os.getenv("UPSTOX_USER_ID")
+OLD_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 
 TELE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -21,9 +21,28 @@ def send_msg(text):
         requests.post(f"{TELE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": text}, timeout=10)
     except: pass
 
+# ✅ FIX 2 - Poller khud Fresh Token banayega, Agent pe Depend nahi rahega
+def get_fresh_token():
+    try:
+        r = requests.post("https://api.upstox.com/v2/login/authorization/token",
+            data={"refresh_token": UPSTOX_REFRESH_TOKEN,
+                  "client_id": UPSTOX_API_KEY,
+                  "client_secret": UPSTOX_API_SECRET,
+                  "redirect_uri": UPSTOX_REDIRECT_URI,
+                  "grant_type": "refresh_token"}, timeout=15)
+        if r.status_code == 200:
+            print("Poller Token: Fresh ban gaya ✅")
+            return r.json()["access_token"]
+    except Exception as e:
+        print(f"Poller Token Refresh Fail: {e}")
+    print("Poller Token: Purana Token use kar raha hu")
+    return OLD_TOKEN
+
 def place_order():
     url = "https://api.upstox.com/v2/order/place"
-    headers = {"Authorization": f"Bearer {UPSTOX_TOKEN}", "Content-Type": "application/json"}
+    # ✅ FIX 2 - Yahan Fresh Token use hoga
+    token = get_fresh_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     data = {
         "quantity": 25, "product": "I", "validity": "DAY", "price": 0,
         "tag": "AGENT_NORTHFLANK_MODE", "instrument_token": "NSE_INDEX|Nifty 50",
