@@ -1,11 +1,6 @@
-name: MyAlgoBot Auto
+name: Run Trading Bot
 
 on:
-  schedule:
-    - cron: '0 4 * * 1-5'
-    - cron: '30 5 * * 1-5'
-    - cron: '0 8 * * 1-5'
-    - cron: '30 3 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -16,15 +11,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pandas requests numpy pyotp
+      - run: pip install -r requirements.txt
       - run: python bot.py
         env:
-          TELEGRAM_TOKEN: ${{ secrets.BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
-          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
           UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
           UPSTOX_API_SECRET: ${{ secrets.UPSTOX_API_SECRET }}
           UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
           UPSTOX_USER_ID: ${{ secrets.UPSTOX_USER_ID }}
           UPSTOX_PIN: ${{ secrets.UPSTOX_PIN }}
           UPSTOX_TOTP_SECRET: ${{ secrets.UPSTOX_TOTP_SECRET }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
