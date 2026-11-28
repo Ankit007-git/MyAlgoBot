@@ -23,4 +23,4 @@ jobs:
           UPSTOX_PIN: ${{ secrets.UPSTOX_PIN }}
           UPSTOX_TOTP_SECRET: ${{ secrets.UPSTOX_TOTP_SECRET }}
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
-        run: python bot.py
+        run: python agent.py
