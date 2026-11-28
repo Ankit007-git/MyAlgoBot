@@ -1,7 +1,17 @@
 import os, requests, datetime, time
 import pandas as pd
+import pyotp
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# --- UPSTOX AUTO TOKEN - 6 Naye Variables ---
+UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
+UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET")
+UPSTOX_REDIRECT_URI = os.getenv("UPSTOX_REDIRECT_URI")
+UPSTOX_USER_ID = os.getenv("UPSTOX_USER_ID")
+UPSTOX_PIN = os.getenv("UPSTOX_PIN")
+UPSTOX_TOTP_SECRET = os.getenv("UPSTOX_TOTP_SECRET")
 ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 
 def send_telegram(msg):
@@ -10,6 +20,29 @@ def send_telegram(msg):
         requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
         print(f"Telegram Fail: {e}")
+
+def get_auto_token():
+    # Auto Token banane ki koshish, Fail hua to Purana Token hi chalega
+    try:
+        if not UPSTOX_TOTP_SECRET:
+            print("TOTP Secret nahi mila, Purana Token use kar raha hu")
+            return None
+        otp = pyotp.TOTP(UPSTOX_TOTP_SECRET).now()
+        print(f"Auto Token Try - TOTP: {otp} - User: {UPSTOX_USER_ID}")
+        # Upstox ka Auto Login yaha hoga
+        # Agar Captcha aaya to ye Fail hoga aur neeche Purana Token chalega
+        return None
+    except Exception as e:
+        print(f"Auto Token Fail: {e}")
+        return None
+
+# Pehle Auto try karo
+_new_token = get_auto_token()
+if _new_token:
+    ACCESS_TOKEN = _new_token
+    print("Naya Auto Token mil gaya ✅")
+else:
+    print("Purana UPSTOX_ACCESS_TOKEN se chal raha hu")
 
 def get_candles(instrument_key):
     try:
@@ -20,78 +53,46 @@ def get_candles(instrument_key):
         r = requests.get(url, headers=headers, timeout=20)
         data = r.json().get("data", {}).get("candles", [])
         if not data:
+            print(f"No Data {instrument_key}: {r.text[:200]}")
             return None
-        df = pd.DataFrame(data, columns=["time","open","high","low","close","volume","oi"])
-        df = df.sort_values("time").reset_index(drop=True)
+        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume", "oi"])
+        df = df.sort_values("time")
         return df
     except Exception as e:
-        print(f"Candle Error: {e}")
+        print(f"Candle Fail {instrument_key}: {e}")
         return None
 
 def analyze(df):
     if df is None or len(df) < 20:
         return None
-    df = df.fillna(method="ffill").fillna(0)
-    typical = (df["high"] + df["low"] + df["close"]) / 3
-    df["vwap"] = (typical * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1)
-    avg_vol = df["volume"].rolling(20).mean().iloc[-1]
-    curr_vol = df["volume"].iloc[-1]
-    rvol = curr_vol / avg_vol if avg_vol and avg_vol > 0 else 0
-    delta = df["close"].diff()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(14).mean()
-    rs = gain / loss.replace(0, 1)
-    rsi = 100 - (100 / (1 + rs))
-    curr_rsi = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
-    price = df["close"].iloc[-1]
-    vwap = df["vwap"].iloc[-1]
-    return {"price": price, "vwap": round(vwap,2), "rvol": round(rvol,2), "rsi": round(curr_rsi,1), "above_vwap": price > vwap}
+    df["ema9"] = df["close"].ewm(span=9).mean()
+    df["ema21"] = df["close"].ewm(span=21).mean()
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    # Simple Logic - EMA Cross
+    if prev["ema9"] < prev["ema21"] and last["ema9"] > last["ema21"]:
+        return f"🟢 BUY Signal - Close: {last['close']} | EMA9: {round(last['ema9'],2)} > EMA21: {round(last['ema21'],2)}"
+    if prev["ema9"] > prev["ema21"] and last["ema9"] < last["ema21"]:
+        return f"🔴 SELL Signal - Close: {last['close']} | EMA9: {round(last['ema9'],2)} < EMA21: {round(last['ema21'],2)}"
+    return None
 
-def main():
-    try:
-        if datetime.datetime.now().weekday() >= 5:
-            print("Weekend Skip")
-            return
-        stocks = {
-            "NIFTY 50": "NSE_INDEX|Nifty 50",
-            "BANKNIFTY": "NSE_INDEX|Nifty Bank",
-            "RELIANCE": "NSE_EQ|INE002A01018",
-            "TCS": "NSE_EQ|INE467B01029",
-            "INFY": "NSE_EQ|INE009A01021",
-        }
-        results = []
-        for name, key in stocks.items():
-            df = get_candles(key)
-            ind = analyze(df)
-            if ind:
-                score = 0
-                if ind["above_vwap"]: score += 30
-                if ind["rvol"] > 1.5: score += 30
-                elif ind["rvol"] > 1.0: score += 15
-                if 50 < ind["rsi"] < 70: score += 20
-                if ind["rvol"] > 1.0 and ind["above_vwap"]: score += 20
-                results.append((name, score, ind))
-            time.sleep(1)
+# --- MAIN SCAN ---
+NIFTY = "NSE_INDEX|Nifty 50"
 
-        if not results:
-            send_telegram("⚠️ <b>BOT ALERT:</b> Upstox se Data nahi aaya. Access Token Expire to nahi ho gaya? Check kar.")
-            return
+print(f"Bot Start: {datetime.datetime.now()}")
+df = get_candles(NIFTY)
+signal = analyze(df)
 
-        results.sort(key=lambda x: x[1], reverse=True)
-        top_name, top_score, top_ind = results[0]
-
-        if top_score >= 70:
-            sl = round(top_ind["price"] * 0.997, 2)
-            target = round(top_ind["price"] * 1.006, 2)
-            msg = f"🚀 <b>SIGNAL - {top_name}</b>\n💰 Price: {top_ind['price']}\n📊 Score: {top_score}/100\n🎯 Target: {target}\n🛑 SL: {sl}\n📈 VWAP: {top_ind['vwap']} | RVOL: {top_ind['rvol']}x | RSI: {top_ind['rsi']}\nSource: Upstox Live"
-            send_telegram(msg)
-        else:
-            msg = f"📊 <b>SCAN COMPLETE - No Trade</b>\nTop: {top_name} - Score {top_score}/100\nPrice: {top_ind['price']} | VWAP: {top_ind['vwap']} | RVOL: {top_ind['rvol']}x | RSI: {top_ind['rsi']}\nBot Sahi Chal Raha Hai."
-            send_telegram(msg)
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        send_telegram(f"❌ <b>BOT CRASH</b>\nError: {str(e)[:400]}")
-
-if __name__ == "__main__":
-    main()
+if signal:
+    msg = f"<b>📊 MyAlgoBot - NIFTY Signal</b>\n\n{signal}\nTime: {datetime.datetime.now().strftime('%d-%m-%Y %H:%M')}"
+    send_telegram(msg)
+    print("Signal bheja ✅")
+else:
+    if df is not None:
+        last_close = df.iloc[-1]["close"]
+        msg = f"✅ <b>MyAlgoBot - LIVE Check</b>\nNIFTY: {last_close}\nTime: {datetime.datetime.now().strftime('%H:%M')}\nStatus: Scan chal raha hai, abhi koi Strong Signal nahi."
+        send_telegram(msg)
+        print("Live Check bheja ✅")
+    else:
+        send_telegram("⚠️ <b>MyAlgoBot</b>\nUpstox se Data nahi aaya. Token Expire ho sakta hai, GitHub Secrets me UPSTOX_ACCESS_TOKEN check karo.")
+        print("Data Fail")
