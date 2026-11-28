@@ -1,0 +1,31 @@
+name: Poller - Northflank Mode
+
+on:
+  schedule:
+    - cron: '30 3 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests pytz
+      - name: Run Poller
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          CAPITAL: ${{ secrets.CAPITAL }}
+          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
+          UPSTOX_API_SECRET: ${{ secrets.UPSTOX_API_SECRET }}
+          UPSTOX_PIN: ${{ secrets.UPSTOX_PIN }}
+          UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
+          UPSTOX_REFRESH_TOKEN: ${{ secrets.UPSTOX_REFRESH_TOKEN }}
+          UPSTOX_TOTP_SECRET: ${{ secrets.UPSTOX_TOTP_SECRET }}
+          UPSTOX_USER_ID: ${{ secrets.UPSTOX_USER_ID }}
+        run: python poller.py
