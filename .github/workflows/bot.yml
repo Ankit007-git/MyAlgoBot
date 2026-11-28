@@ -1,26 +1,21 @@
-name: Run Trading Bot
+name: Run Bot
 on:
-  schedule:
-    - cron: '45 3 * * 1-5'
   workflow_dispatch:
+  schedule:
+    - cron: '45 3 * * 1-5'  # Mon-Fri 9:15 AM IST
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - name: Run Bot
+      - run: python agent.py
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
-          UPSTOX_API_SECRET: ${{ secrets.UPSTOX_API_SECRET }}
-          UPSTOX_REDIRECT_URI: ${{ secrets.UPSTOX_REDIRECT_URI }}
-          UPSTOX_USER_ID: ${{ secrets.UPSTOX_USER_ID }}
-          UPSTOX_PIN: ${{ secrets.UPSTOX_PIN }}
-          UPSTOX_TOTP_SECRET: ${{ secrets.UPSTOX_TOTP_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
-        run: python agent.py
