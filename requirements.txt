@@ -3,4 +3,6 @@ pandas
 requests
 numpy
 upstox-python-sdk
+requests
 pyotp
+python-telegram-bot==20.7
