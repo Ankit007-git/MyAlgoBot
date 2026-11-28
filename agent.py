@@ -10,6 +10,7 @@ USER_ID = os.getenv("UPSTOX_USER_ID")
 PIN = os.getenv("UPSTOX_PIN")
 TOTP_SECRET = os.getenv("UPSTOX_TOTP_SECRET")  # BACKUP
 OLD_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
+REDIRECT_URI = os.getenv("UPSTOX_REDIRECT_URI", "https://127.0.0.1:8000") # ✅ FIX 1 - Ab Secrets se aayega, Hardcode nahi
 CAPITAL = float(os.getenv("CAPITAL", "30000"))  # Abhi 30k, Baad me 1 Lakh kar dena
 MAX_TRADES = 3
 RISK_PCT = 0.01  # 1% Risk
@@ -32,7 +33,7 @@ def get_token():
     try:
         r = requests.post("https://api.upstox.com/v2/login/authorization/token",
             data={"refresh_token": REFRESH_TOKEN, "client_id": API_KEY, "client_secret": API_SECRET,
-                  "redirect_uri": "https://127.0.0.1:8000", "grant_type": "refresh_token"}, timeout=15)
+                  "redirect_uri": REDIRECT_URI, "grant_type": "refresh_token"}, timeout=15) # ✅ FIX 1 - Yahan REDIRECT_URI use hoga
         if r.status_code == 200:
             print("Token: Refresh Token se ban gaya ✅")
             return r.json()["access_token"]
